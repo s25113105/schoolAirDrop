@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <title>CampusDrop P2P 分享</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .peer-list { margin-top: 15px; border: 1px solid #ccc; padding: 10px; }
+        .peer-item { padding: 8px; border-bottom: 1px dashed #eee; cursor: pointer; }
+        .peer-item:hover { background-color: #f0f0f0; }
+        .status { font-weight: bold; color: green; }
+    </style>
+</head>
+<body>
+    <h1>CampusDrop 網路通訊專題</h1>
+    
+    <input type="text" id="n" placeholder="輸入暱稱" value="{{ my_name }}">
+    <button onclick="setName()">設定暱稱並上線</button>
+    <p>我的 UID: <span id="my_uid" class="status">正在連接...</span></p>
+    <hr>
+
+    <h2>在線同學 (<span id="count">0</span> 人)</h2>
+    <p>每 3 秒自動更新 mDNS 列表，用於**判斷是否在校內**。</p>
+    <div id="peer_list" class="peer-list"></div>
+    <hr>
+    
+    <h2>群組聊天室 (WebSocket 廣播)</h2>
+    <input type="text" id="chat_input" placeholder="輸入訊息...">
+    <button onclick="sendChat()">發送</button>
+    <div id="chat_log" style="height: 200px; overflow-y: scroll; border: 1px solid #ddd; margin-top: 10px; padding: 10px;"></div>
+
+
+    <script>
+        // --- 1. 全局設定 ---
+        // 注意：這裡的 MY_UID 和 my_name 已經由 Python 後端傳入
+        const MY_UID = '{{ my_uuid }}'; 
+        document.getElementById('my_uid').textContent = MY_UID;
+        
+        // 連接到後端 Socket.IO 服務
+        const socket = io(); 
+        const PEER_CONNECTIONS = {}; // 儲存所有 WebRTC 連線
+        
+        // --- 2. WebSocket/SocketIO 事件處理 ---
+        socket.on('connect', () => {
+            console.log('🔗 SocketIO 連線成功！開始發送信令 UID.');
+            // 連線後立即發送自己的 UID 給伺服器
+            socket.emit('set_uid', { uid: MY_UID });
+        });
+
+        socket.on('p2p_signal', (data) => {
+            // 收到 P2P 信令（SDP 或 ICE Candidate），執行 WebRTC 邏輯
+            handleP2PSignaling(data);
+        });
+
+        socket.on('group_chat', (data) => {
+            // 收到群組聊天訊息 (這來自遠端節點)
+            // 使用 data.sender_uid 來標識發送者
+            displayChat(data.sender_uid, data.content, new Date(data.timestamp * 1000).toLocaleTimeString());
+        });
+
+        // --- 3. UI/API 交互函數 ---
+
+        function setName() {
+            const name = document.getElementById('n').value;
+            fetch('/setname', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name })
+            })
+            .then(r => r.json())
+            .then(data => {
+                alert(`已上線為: ${data.name}`);
+                fetchPeers(); 
+            });
+        }
+
+        function fetchPeers() {
+            // 請求 mDNS 發現的鄰近節點列表
+            fetch('/peers')
+            .then(r => r.json())
+            .then(peers => {
+                document.getElementById('count').textContent = peers.length;
+                
+                const html = peers.map(p => `
+                    <div class="peer-item" onclick="startP2P('${p.uid}', '${p.ip}')">
+                        <strong>${p.name}</strong> (${p.ip}) 
+                        <span class="status">[${PEER_CONNECTIONS[p.uid] ? 'P2P 連線中' : '未連線'}]</span>
+                        <br><small>UID: ${p.uid}</small>
+                    </div>
+                `).join('');
+                document.getElementById('peer_list').innerHTML = html;
+            });
+        }
+
+        // 定時刷新 mDNS 列表 (每 3 秒)
+        setInterval(fetchPeers, 3000);
+
+        function sendChat() {
+            const input = document.getElementById('chat_input');
+            const content = input.value;
+            if (content.trim()) {
+                // 1. 發送給 SocketIO 伺服器進行廣播
+                socket.emit('group_chat', { content: content });
+                
+                // 2. 本地立即顯示自己的訊息 (使用 MY_UID 標識自己)
+                displayChat(MY_UID, content, new Date().toLocaleTimeString()); 
+                
+                input.value = '';
+            }
+        }
+
+        function displayChat(uid, content, timestamp) {
+            const log = document.getElementById('chat_log');
+            // 判斷發送者是否為自己 (MY_UID)
+            const sender = (uid === MY_UID) ? '我' : uid; 
+
+            log.innerHTML += `
+                <p>
+                    <small>[${timestamp}]</small> 
+                    <strong>${sender}:</strong> ${content}
+                </p>`;
+            log.scrollTop = log.scrollHeight; // 滾動到底部
+        }
+        
+        // --- 4. WebRTC P2P 核心邏輯 (待完成) ---
+        
+        function startP2P(targetUid, targetIp) {
+            if (PEER_CONNECTIONS[targetUid]) {
+                console.log('已連線或正在連線...');
+                return;
+            }
+            
+            console.log(`🚀 嘗試與 ${targetUid} 建立 P2P 連線...`);
+            
+            // 1. 創建 RTCPeerConnection 實例
+            const pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
+            });
+            
+            PEER_CONNECTIONS[targetUid] = pc;
+            
+            // 2. 處理 ICE 候選者 (通過 SocketIO 發送給目標)
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('p2p_signal', {
+                        type: 'ice-candidate',
+                        target_uid: targetUid,
+                        signal: event.candidate
+                    });
+                }
+            };
+            
+            // 3. 創建 DataChannel (用於傳輸檔案/數據)
+            const dataChannel = pc.createDataChannel("file-transfer");
+            dataChannel.onopen = () => {
+                console.log(`✅ P2P DataChannel 連線到 ${targetUid} 成功!`);
+                fetchPeers(); // 刷新列表顯示連線狀態
+            };
+            
+            // 4. 創建 Offer
+            pc.createOffer()
+                .then(offer => pc.setLocalDescription(offer))
+                .then(() => {
+                    // 發送 Offer 給信令伺服器
+                    socket.emit('p2p_signal', {
+                        type: 'offer',
+                        target_uid: targetUid,
+                        signal: pc.localDescription
+                    });
+                });
+        }
+        
+        function handleP2PSignaling(data) {
+            const senderUid = data.sender_uid;
+            const signal = data.signal;
+            let pc = PEER_CONNECTIONS[senderUid];
+
+            // 判斷是否為第一次收到信令 (例如收到 Offer)
+            if (!pc) {
+                pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+                PEER_CONNECTIONS[senderUid] = pc;
+                
+                // 處理遠端創建的 DataChannel
+                pc.ondatachannel = (event) => {
+                    const dataChannel = event.channel;
+                    dataChannel.onopen = () => {
+                        console.log(`✅ P2P DataChannel 從 ${senderUid} 連線成功!`);
+                        fetchPeers();
+                    };
+                    // 在這裡實作接收檔案的邏輯
+                };
+                
+                // 處理 ICE 候選者（與 startP2P 中設置的相同）
+                pc.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        socket.emit('p2p_signal', {
+                            type: 'ice-candidate',
+                            target_uid: senderUid,
+                            signal: event.candidate
+                        });
+                    }
+                };
+            }
+
+            // 設置遠端描述 (Offer/Answer)
+            if (signal.type === 'offer') {
+                pc.setRemoteDescription(new RTCSessionDescription(signal))
+                    .then(() => pc.createAnswer())
+                    .then(answer => pc.setLocalDescription(answer))
+                    .then(() => {
+                        // 回傳 Answer
+                        socket.emit('p2p_signal', {
+                            type: 'answer',
+                            target_uid: senderUid,
+                            signal: pc.localDescription
+                        });
+                    });
+            } else if (signal.type === 'answer') {
+                pc.setRemoteDescription(new RTCSessionDescription(signal));
+            } else if (signal.type === 'ice-candidate') {
+                pc.addIceCandidate(new RTCIceCandidate(signal));
+            }
+        }
+
+    </script>
+</body>
+</html>

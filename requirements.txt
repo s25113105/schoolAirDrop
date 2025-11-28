@@ -1,0 +1,7 @@
+Flask
+Flask-SocketIO
+python-engineio
+python-socketio
+gunicorn       # 雲端服務器運行 Flask/SocketIO 的必要工具
+eventlet       # Gunicorn 處理 SocketIO 流量的最佳工作者
+zeroconf
