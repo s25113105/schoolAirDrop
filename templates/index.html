@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CampusDrop P2P 分享</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background-color: #f9f9f9; }
+        h1 { color: #333; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        
+        /* 列表樣式 */
+        .peer-list { margin-top: 15px; border: 1px solid #eee; padding: 10px; border-radius: 5px; min-height: 50px; }
+        .peer-item { padding: 10px; border-bottom: 1px dashed #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .peer-item:hover { background-color: #f0f7ff; }
+        .peer-item:last-child { border-bottom: none; }
+        .status { font-weight: bold; color: green; font-size: 0.9em; }
+        
+        /* 聊天與檔案區域 */
+        #chat_log { height: 300px; overflow-y: scroll; border: 1px solid #ddd; margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; }
+        .message { margin-bottom: 8px; padding: 5px 10px; border-radius: 15px; background-color: #e9ecef; display: inline-block; max-width: 80%; }
+        .my-message { background-color: #007bff; color: white; align-self: flex-end; }
+        
+        /* 輸入區塊 */
+        .input-group { margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap; }
+        input[type="text"] { flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        
+        /* 檔案傳輸區塊 */
+        .file-area { margin-top: 15px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 5px; }
+        #transfer_status { margin-top: 5px; font-weight: bold; color: #856404; font-size: 0.9em; }
+        
+        /* 下載連結樣式 */
+        .download-link { display: block; margin-top: 5px; padding: 5px; background-color: #d4edda; color: #155724; text-decoration: none; border-radius: 4px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📡 CampusDrop 校園傳檔</h1>
+
+    <div class="input-group">
+        <input type="text" id="n" placeholder="輸入暱稱" value="{{ my_name }}">
+        <button onclick="setName()">設定上線</button>
+    </div>
+    <p>我的 UID: <span id="my_uid" class="status">正在連接...</span></p>
+    <hr>
+
+    <h2>在線同學 (<span id="count">0</span> 人)</h2>
+    <p style="font-size: 0.8em; color: #666;">點擊同學名字即可建立 P2P 連線並傳檔</p>
+    <div id="peer_list" class="peer-list"></div>
+    <hr>
+
+    <h2>💬 聊天室 & 📁 檔案傳輸</h2>
+    
+    <div id="chat_log"></div>
+    
+    <div class="input-group">
+        <input type="text" id="chat_input" placeholder="輸入訊息...">
+        <button onclick="sendChat()">發送訊息</button>
+    </div>
+
+    <div class="file-area">
+        <strong>P2P 檔案傳輸 (需先點擊上方同學連線):</strong><br>
+        <div style="margin-top: 5px; display: flex; gap: 5px;">
+            <input type="file" id="file_input" disabled>
+            <button onclick="sendFile()" id="btn_send_file" disabled>傳送檔案</button>
+        </div>
+        <div id="transfer_status">等待連線...</div>
+    </div>
+</div>
+
+<script>
+    // --- 1. 全局設定 ---
+    const MY_UID = '{{ my_uuid }}';
+    document.getElementById('my_uid').textContent = MY_UID;
+    document.getElementById('n').value = '{{ my_name }}'; // 預設填入名稱
+
+    // 連接到後端 Socket.IO
+    const socket = io();
+    
+    const PEER_CONNECTIONS = {}; // 儲存所有 WebRTC 連線: { targetUid: RTCPeerConnection }
+    const DATA_CHANNELS = {};    // 儲存 DataChannel: { targetUid: RTCDataChannel }
+    
+    // --- 檔案傳輸相關變數 ---
+    const CHUNK_SIZE = 16384; // 16KB 分片
+    let receivedBuffers = {}; // 針對不同發送者的暫存 { senderUid: [ArrayBuffer, ...] }
+    let receivedMeta = {};    // 針對不同發送者的檔案資訊 { senderUid: {name, size, type} }
+
+    // --- 2. Socket.IO 事件處理 ---
+    socket.on('connect', () => {
+        console.log('🔗 SocketIO 連線成功！');
+        socket.emit('set_uid', { uid: MY_UID });
+    });
+
+    socket.on('p2p_signal', (data) => {
+        handleP2PSignaling(data);
+    });
+
+    socket.on('group_chat', (data) => {
+        displayChat(data.sender_uid, data.content, new Date(data.timestamp * 1000).toLocaleTimeString());
+    });
+
+    // --- 3. UI/API 交互函數 ---
+    function setName() {
+        const name = document.getElementById('n').value;
+        fetch('/setname', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        })
+        .then(r => r.json())
+        .then(data => {
+            alert(`已上線為: ${data.name}`);
+            fetchPeers();
+        });
+    }
+
+    function fetchPeers() {
+        fetch('/peers')
+        .then(r => r.json())
+        .then(peers => {
+            document.getElementById('count').textContent = peers.length;
+            const list = document.getElementById('peer_list');
+            
+            if (peers.length === 0) {
+                list.innerHTML = '<div style="color:#999; text-align:center;">附近尚無人 (或是雲端模式無 mDNS)</div>';
+                return;
+            }
+
+            const html = peers.map(p => {
+                const isConnected = PEER_CONNECTIONS[p.uid] && PEER_CONNECTIONS[p.uid].connectionState === 'connected';
+                const statusText = isConnected ? '<span style="color:green">✅ 已連線</span>' : '<span style="color:blue">🔗 點擊連線</span>';
+                
+                return `
+                <div class="peer-item" onclick="startP2P('${p.uid}')">
+                    <div>
+                        <strong>${p.name}</strong> <small>(${p.ip})</small><br>
+                        <small>UID: ${p.uid}</small>
+                    </div>
+                    <div>${statusText}</div>
+                </div>`;
+            }).join('');
+            list.innerHTML = html;
+        });
+    }
+    
+    // 定時刷新 mDNS 列表 (每 5 秒)
+    setInterval(fetchPeers, 5000);
+    // 頁面載入時先抓一次
+    fetchPeers();
+
+    function sendChat() {
+        const input = document.getElementById('chat_input');
+        const content = input.value;
+        if (content.trim()) {
+            // 1. 廣播給 SocketIO
+            socket.emit('group_chat', { content: content });
+            // 2. 顯示自己
+            displayChat('我', content, new Date().toLocaleTimeString());
+            input.value = '';
+        }
+    }
+
+    function displayChat(sender, content, time) {
+        const log = document.getElementById('chat_log');
+        const isMe = sender === '我' || sender === MY_UID;
+        const msgDiv = document.createElement('div');
+        msgDiv.style.textAlign = isMe ? 'right' : 'left';
+        
+        msgDiv.innerHTML = `
+            <div class="message ${isMe ? 'my-message' : ''}">
+                <small>${time} <strong>${sender}</strong>:</small><br>
+                ${content}
+            </div>
+        `;
+        log.appendChild(msgDiv);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    // --- 4. WebRTC P2P 核心邏輯 ---
+
+    // 設定 ICE 伺服器 (使用 Google 免費 STUN)
+    const rtcConfig = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    };
+
+    // [主動方] 發起連線
+    async function startP2P(targetUid) {
+        if (PEER_CONNECTIONS[targetUid]) {
+            console.log('已經有連線物件，跳過建立');
+            return; 
+        }
+
+        console.log(`🚀 嘗試與 ${targetUid} 建立 P2P 連線...`);
+        const pc = new RTCPeerConnection(rtcConfig);
+        PEER_CONNECTIONS[targetUid] = pc;
+
+        // 1. [主動方] 必須建立 DataChannel
+        const dc = pc.createDataChannel("file-transfer");
+        setupDataChannel(dc, targetUid);
+
+        // 監聽 ICE 候選者
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                socket.emit('p2p_signal', {
+                    type: 'ice-candidate',
+                    target_uid: targetUid,
+                    candidate: event.candidate
+                });
+            }
+        };
+
+        // 建立 Offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        
+        // 發送 Offer
+        socket.emit('p2p_signal', {
+            type: 'offer',
+            target_uid: targetUid,
+            sdp: pc.localDescription
+        });
+    }
+
+    // [被動方] 處理信令
+    async function handleP2PSignaling(data) {
+        const senderUid = data.sender_uid;
+        let pc = PEER_CONNECTIONS[senderUid];
+
+        if (!pc) {
+            // 如果是第一次收到來自這個人的信令，建立 PC
+            pc = new RTCPeerConnection(rtcConfig);
+            PEER_CONNECTIONS[senderUid] = pc;
+
+            // [被動方] 監聽 DataChannel (別人建好的)
+            pc.ondatachannel = (event) => {
+                console.log(`📡 收到來自 ${senderUid} 的 DataChannel`);
+                setupDataChannel(event.channel, senderUid);
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('p2p_signal', {
+                        type: 'ice-candidate',
+                        target_uid: senderUid,
+                        candidate: event.candidate
+                    });
+                }
+            };
+        }
+
+        try {
+            if (data.type === 'offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                socket.emit('p2p_signal', {
+                    type: 'answer',
+                    target_uid: senderUid,
+                    sdp: pc.localDescription
+                });
+            } 
+            else if (data.type === 'answer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            } 
+            else if (data.type === 'ice-candidate') {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        } catch (e) {
+            console.error("WebRTC Error:", e);
+        }
+    }
+
+    // --- 5. DataChannel 檔案傳輸邏輯 ---
+
+    function setupDataChannel(dc, peerUid) {
+        DATA_CHANNELS[peerUid] = dc;
+        
+        dc.onopen = () => {
+            console.log(`✅ DataChannel OPEN with ${peerUid}`);
+            document.getElementById('transfer_status').innerText = `P2P 已連線 (${peerUid})`;
+            document.getElementById('file_input').disabled = false;
+            document.getElementById('btn_send_file').disabled = false;
+            // 刷新列表顯示綠色狀態
+            fetchPeers();
+        };
+
+        dc.onclose = () => {
+             console.log("❌ DataChannel CLOSE");
+             document.getElementById('transfer_status').innerText = "P2P 連線中斷";
+        };
+
+        dc.onmessage = (event) => {
+            handleDataMessage(event, peerUid);
+        };
+    }
+
+    // 發送檔案 (分片)
+    function sendFile() {
+        const fileInput = document.getElementById('file_input');
+        const file = fileInput.files[0];
+        if (!file) return alert("請先選擇檔案");
+
+        // 找第一個可用的 DataChannel (Demo 用，假設只有一個連線)
+        const peerUids = Object.keys(DATA_CHANNELS);
+        if (peerUids.length === 0) return alert("尚未連線到任何 Peer");
+        
+        const targetUid = peerUids[0]; // 預設傳給第一個人
+        const dc = DATA_CHANNELS[targetUid];
+
+        if (dc.readyState !== 'open') return alert("連線尚未準備好");
+
+        console.log(`開始傳送 ${file.name} 給 ${targetUid}`);
+        document.getElementById('transfer_status').innerText = "準備傳送...";
+
+        // 1. 發送 Metadata
+        dc.send(JSON.stringify({
+            type: 'file-start',
+            name: file.name,
+            size: file.size,
+            fileType: file.type
+        }));
+
+        // 2. 讀取並分片發送
+        let offset = 0;
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            dc.send(e.target.result); // 發送 ArrayBuffer
+            offset += e.target.result.byteLength;
+
+            // 更新 UI
+            const percent = Math.round((offset / file.size) * 100);
+            document.getElementById('transfer_status').innerText = `傳送中... ${percent}%`;
+
+            if (offset < file.size) {
+                readSlice(offset);
+            } else {
+                dc.send(JSON.stringify({ type: 'file-end' }));
+                document.getElementById('transfer_status').innerText = "傳送完成！";
+            }
+        };
+
+        const readSlice = (o) => {
+            const slice = file.slice(o, o + CHUNK_SIZE);
+            reader.readAsArrayBuffer(slice);
+        };
+
+        readSlice(0);
+    }
+
+    // 接收檔案
+    function handleDataMessage(event, senderUid) {
+        const data = event.data;
+
+        if (typeof data === 'string') {
+            const msg = JSON.parse(data);
+            if (msg.type === 'file-start') {
+                receivedBuffers[senderUid] = [];
+                receivedMeta[senderUid] = msg;
+                document.getElementById('transfer_status').innerText = `正在接收 ${msg.name}...`;
+            } else if (msg.type === 'file-end') {
+                // 組裝並下載
+                const meta = receivedMeta[senderUid];
+                const blob = new Blob(receivedBuffers[senderUid], { type: meta.fileType });
+                const url = URL.createObjectURL(blob);
+                
+                // 顯示下載連結在聊天室
+                const link = `<a href="${url}" download="${meta.name}" class="download-link">📥 收到檔案：${meta.name}</a>`;
+                displayChat(senderUid, link, new Date().toLocaleTimeString());
+                
+                document.getElementById('transfer_status').innerText = "接收完成！";
+                // 清理
+                receivedBuffers[senderUid] = [];
+            }
+        } else {
+            // 收到 ArrayBuffer (檔案片段)
+            if (!receivedBuffers[senderUid]) receivedBuffers[senderUid] = [];
+            receivedBuffers[senderUid].push(data);
+            
+            // 計算進度 (可選)
+            // 這裡可以加上接收進度條邏輯
+        }
+    }
+</script>
+
+</body>
+</html>
