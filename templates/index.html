@@ -3,145 +3,163 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CampusDrop P2P 分享</title>
+    <title>CampusDrop 最終版</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f9f9f9; }
-        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .peer-item { padding: 10px; border-bottom: 1px dashed #eee; cursor: pointer; display: flex; justify-content: space-between; }
-        .peer-item:hover { background-color: #f0f7ff; }
-        #chat_log { height: 300px; overflow-y: scroll; border: 1px solid #ddd; padding: 10px; margin-top:10px; background:#fff;}
-        .message { margin-bottom: 5px; padding: 5px 10px; border-radius: 10px; background: #eee; display: inline-block; }
+        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f4f4f9; }
+        .container { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        
+        /* 用戶列表 */
+        .peer-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .peer-item:last-child { border-bottom: none; }
+        .btn-connect { background: #28a745; color: white; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.9em; }
+        .btn-connect:hover { background: #218838; }
+        
+        /* 聊天視窗 */
+        #chat_log { height: 350px; overflow-y: scroll; border: 1px solid #ddd; padding: 15px; margin-top:15px; background:#fff; border-radius: 8px; }
+        .message { margin-bottom: 8px; padding: 8px 12px; border-radius: 12px; max-width: 80%; word-wrap: break-word; }
         .my-message { background: #007bff; color: white; float: right; clear: both; }
-        .other-message { float: left; clear: both; }
-        button { cursor: pointer; padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 4px; }
-        button:disabled { background: #ccc; }
+        .other-message { background: #e9ecef; color: #333; float: left; clear: both; }
+        .sys-message { text-align: center; color: #888; font-size: 0.85em; clear: both; margin: 5px 0; }
+        
+        /* 檔案區塊 (預設隱藏) */
+        #file_area { margin-top:15px; background:#e8f5e9; padding:15px; border-radius: 8px; border: 1px solid #c3e6cb; display:none; animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>📡 CampusDrop 雲端版</h1>
+    <h2 style="text-align:center;">📡 CampusDrop <small style="font-size:0.5em; color:#666;">Cloud v2</small></h2>
 
-    <div style="margin-bottom: 15px;">
-        <input type="text" id="my_name" placeholder="輸入您的暱稱" style="padding: 5px;">
-        <button onclick="joinSystem()">上線 / 更新暱稱</button>
+    <div style="background:#f8f9fa; padding:10px; border-radius:8px; margin-bottom:15px; display:flex; gap:10px;">
+        <input type="text" id="my_name" placeholder="輸入暱稱" style="flex-grow:1; padding:8px; border:1px solid #ddd; border-radius:4px;">
+        <button onclick="updateName()" style="padding:8px 15px; background:#007bff; color:white; border:none; border-radius:4px; cursor:pointer;">設定暱稱</button>
     </div>
-    <p>我的 UID: <span id="display_uid" style="color:green; font-weight:bold;"></span></p>
+    <div style="text-align:right; font-size:0.8em; color:#666;">我的 UID: <span id="display_uid">...</span></div>
 
     <hr>
-    <h3>在線同學 (<span id="count">0</span> 人)</h3>
+
+    <h3>👥 在線同學 (<span id="count">0</span>)</h3>
     <div id="peer_list"></div>
 
+    <div id="file_area">
+        <h4 style="margin:0 0 10px 0;">📂 P2P 檔案傳輸通道 (已連線)</h4>
+        <p>正在與 <strong id="target_peer_name" style="color:#28a745;"></strong> 連線中</p>
+        <div style="display:flex; gap:10px;">
+            <input type="file" id="file_input" style="flex-grow:1;">
+            <button onclick="sendFile()" style="background:#28a745; color:white; border:none; padding:8px 20px; border-radius:4px; cursor:pointer;">傳送</button>
+        </div>
+        <div id="transfer_status" style="margin-top:10px; font-weight:bold; color:#555;"></div>
+    </div>
+
     <hr>
-    <h3>💬 聊天 & 傳檔</h3>
+
     <div id="chat_log"></div>
     <div style="margin-top:10px; display:flex; gap:5px;">
-        <input type="text" id="chat_input" placeholder="訊息..." style="flex-grow:1; padding:5px;">
-        <button onclick="sendChat()">發送</button>
-    </div>
-    
-    <div id="file_area" style="margin-top:15px; background:#fff3cd; padding:10px; display:none;">
-        <strong>正在與 <span id="target_peer_name"></span> 連線</strong>
-        <input type="file" id="file_input">
-        <button onclick="sendFile()">傳送檔案</button>
-        <div id="transfer_status"></div>
+        <input type="text" id="chat_input" placeholder="輸入訊息..." style="flex-grow:1; padding:10px; border:1px solid #ddd; border-radius:4px;">
+        <button onclick="sendChat()" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">發送</button>
     </div>
 </div>
 
 <script>
     const socket = io();
     
-    // 1. 生成或讀取唯一的 UID (解決 ID 衝突問題)
+    // --- UID 與 名稱處理 ---
     function getUniqueUID() {
         let uid = localStorage.getItem('campus_uid');
         if (!uid) {
-            uid = Math.random().toString(36).substring(2, 10); // 隨機生成 8 碼
+            uid = Math.random().toString(36).substring(2, 6).toUpperCase();
             localStorage.setItem('campus_uid', uid);
         }
         return uid;
     }
-
     const MY_UID = getUniqueUID();
     document.getElementById('display_uid').textContent = MY_UID;
     
-    // 預設暱稱
     let myName = localStorage.getItem('campus_name') || '同學' + Math.floor(Math.random()*100);
     document.getElementById('my_name').value = myName;
 
-    // --- 2. Socket 連線與登入 ---
-    socket.on('connect', () => {
-        console.log('已連上伺服器');
-        joinSystem(); // 連線後自動登入
-    });
-
-    function joinSystem() {
+    function updateName() {
         myName = document.getElementById('my_name').value;
-        localStorage.setItem('campus_name', myName); // 記住暱稱
-        
-        // 發送 "join" 事件告訴伺服器我是誰
+        localStorage.setItem('campus_name', myName);
         socket.emit('join', { uid: MY_UID, name: myName });
+        alert('暱稱已更新！');
     }
 
-    // --- 3. 更新在線名單 (監聽伺服器廣播) ---
+    // --- Socket 事件 ---
+    socket.on('connect', () => {
+        console.log('Connected to Server');
+        socket.emit('join', { uid: MY_UID, name: myName });
+    });
+
     socket.on('update_user_list', (users) => {
         const list = document.getElementById('peer_list');
-        // 過濾掉自己
         const others = users.filter(u => u.uid !== MY_UID);
-        
         document.getElementById('count').textContent = others.length;
         
         if(others.length === 0) {
-            list.innerHTML = '<div style="color:#888;">目前沒有其他人在線...</div>';
-            return;
+            list.innerHTML = '<div style="color:#999; text-align:center; padding:10px;">附近沒人...找個同學一起開網頁測試吧！</div>';
+        } else {
+            list.innerHTML = others.map(u => `
+                <div class="peer-item">
+                    <div><strong>${u.name}</strong> <small style="color:#888;">#${u.uid}</small></div>
+                    ${PEER_CONNECTIONS[u.uid] ? 
+                        '<span style="color:green; font-weight:bold;">🔗 已連線</span>' : 
+                        `<button class="btn-connect" onclick="startP2P('${u.uid}', '${u.name}')">發起連線</button>`
+                    }
+                </div>
+            `).join('');
         }
-
-        list.innerHTML = others.map(u => `
-            <div class="peer-item">
-                <span>👤 <strong>${u.name}</strong> <small>(${u.uid})</small></span>
-                ${PEER_CONNECTIONS[u.uid] ? '<span style="color:green">✅ 已連線</span>' : 
-                  `<button onclick="startP2P('${u.uid}', '${u.name}')">連線傳檔</button>`}
-            </div>
-        `).join('');
     });
 
-    // --- 4. 聊天功能 ---
+    // 接收聊天 (修正：顯示名字)
+    socket.on('group_chat', (data) => {
+        // data.sender_name 是我們在後端新加的
+        appendMsg(data.sender_name, data.content, false);
+    });
+
     function sendChat() {
         const txt = document.getElementById('chat_input').value;
         if(!txt) return;
-        
         socket.emit('group_chat', { sender_uid: MY_UID, content: txt });
-        appendMsg(MY_UID, txt, true); // 顯示自己的
+        appendMsg('我', txt, true);
         document.getElementById('chat_input').value = '';
     }
 
-    socket.on('group_chat', (data) => {
-        appendMsg(data.sender_uid, data.content, false);
-    });
-
-    function appendMsg(uid, txt, isMe) {
+    function appendMsg(name, txt, isMe, isSys=false) {
         const log = document.getElementById('chat_log');
-        log.innerHTML += `<div class="message ${isMe ? 'my-message' : 'other-message'}">
-            <small>${isMe ? '我' : uid}</small><br>${txt}
-        </div><div style="clear:both;"></div>`;
+        if (isSys) {
+            log.innerHTML += `<div class="sys-message">${txt}</div>`;
+        } else {
+            log.innerHTML += `<div class="message ${isMe ? 'my-message' : 'other-message'}">
+                <small style="opacity:0.8;">${name}</small><br>${txt}
+            </div><div style="clear:both;"></div>`;
+        }
         log.scrollTop = log.scrollHeight;
     }
 
-    // --- 5. WebRTC P2P (傳檔核心) ---
+    // --- WebRTC P2P 核心 (附帶詳細狀態顯示) ---
     const PEER_CONNECTIONS = {};
     const DATA_CHANNELS = {};
-    let currentTargetName = "";
-
     const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
     async function startP2P(targetUid, targetName) {
-        console.log(`發起連線給 ${targetName}`);
+        appendMsg('系統', `正在呼叫 ${targetName} 建立 P2P 連線...`, false, true);
+        
         const pc = new RTCPeerConnection(rtcConfig);
         PEER_CONNECTIONS[targetUid] = pc;
-        currentTargetName = targetName;
+
+        // 監聽連線狀態
+        pc.oniceconnectionstatechange = () => {
+            console.log(`ICE State: ${pc.iceConnectionState}`);
+            if (pc.iceConnectionState === 'connected') {
+                 appendMsg('系統', `與 ${targetName} 的 P2P 通道已打通！`, false, true);
+            }
+        };
 
         const dc = pc.createDataChannel("file");
-        setupDataChannel(dc, targetUid);
+        setupDataChannel(dc, targetUid, targetName);
 
         pc.onicecandidate = e => {
             if(e.candidate) socket.emit('p2p_signal', { type: 'ice', target_uid: targetUid, sender_uid: MY_UID, candidate: e.candidate });
@@ -154,81 +172,86 @@
 
     socket.on('p2p_signal', async (data) => {
         const sender = data.sender_uid;
+        // 嘗試從列表中找名字，找不到就用 UID
+        let senderName = sender; 
+        // 這裡偷懶直接顯示 UID，正式版可以去 user list 查
+        
         if(!PEER_CONNECTIONS[sender]) {
+            appendMsg('系統', `收到來自 ${sender} 的連線請求...`, false, true);
             const pc = new RTCPeerConnection(rtcConfig);
             PEER_CONNECTIONS[sender] = pc;
             
-            pc.ondatachannel = e => setupDataChannel(e.channel, sender);
+            pc.ondatachannel = e => setupDataChannel(e.channel, sender, sender);
+            
             pc.onicecandidate = e => {
                 if(e.candidate) socket.emit('p2p_signal', { type: 'ice', target_uid: sender, sender_uid: MY_UID, candidate: e.candidate });
             };
         }
         
         const pc = PEER_CONNECTIONS[sender];
-        
-        if(data.type === 'offer') {
-            await pc.setRemoteDescription(data.sdp);
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            socket.emit('p2p_signal', { type: 'answer', target_uid: sender, sender_uid: MY_UID, sdp: answer });
-        } else if(data.type === 'answer') {
-            await pc.setRemoteDescription(data.sdp);
-        } else if(data.type === 'ice') {
-            await pc.addIceCandidate(data.candidate);
-        }
+        try {
+            if(data.type === 'offer') {
+                await pc.setRemoteDescription(data.sdp);
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('p2p_signal', { type: 'answer', target_uid: sender, sender_uid: MY_UID, sdp: answer });
+            } else if(data.type === 'answer') {
+                await pc.setRemoteDescription(data.sdp);
+            } else if(data.type === 'ice') {
+                await pc.addIceCandidate(data.candidate);
+            }
+        } catch(e) { console.error(e); }
     });
 
-    function setupDataChannel(dc, uid) {
+    function setupDataChannel(dc, uid, name) {
         DATA_CHANNELS[uid] = dc;
         dc.onopen = () => {
-            alert(`P2P 連線成功！現在可以傳檔給 ${uid}`);
-            document.getElementById('file_area').style.display = 'block';
-            document.getElementById('target_peer_name').innerText = uid;
-            joinSystem(); // 重新整理列表狀態
+            appendMsg('系統', `✅ 檔案傳輸通道就緒！`, false, true);
+            // 顯示檔案區塊
+            const fileArea = document.getElementById('file_area');
+            fileArea.style.display = 'block';
+            document.getElementById('target_peer_name').innerText = name || uid;
+            
+            // 讓列表按鈕變色
+            socket.emit('join', { uid: MY_UID, name: myName }); // 觸發列表刷新
         };
         dc.onmessage = handleFileMessage;
     }
 
-    // --- 檔案傳輸 (簡化版) ---
+    // --- 檔案傳輸 ---
     function sendFile() {
         const file = document.getElementById('file_input').files[0];
-        if(!file) return alert('選個檔案吧');
+        if(!file) return alert('請選擇檔案');
         
-        // 傳給目前連線的第一個人 (Demo用)
-        const targetUid = Object.keys(DATA_CHANNELS)[0];
+        const targetUid = Object.keys(DATA_CHANNELS)[0]; // Demo: 傳給第一個連線的人
         const dc = DATA_CHANNELS[targetUid];
         
-        // 1. 傳 Metadata
+        if(dc.readyState !== 'open') return alert('連線尚未準備好');
+
         dc.send(JSON.stringify({ type: 'meta', name: file.name, size: file.size }));
-        
-        // 2. 傳檔案
         const reader = new FileReader();
         reader.onload = () => {
-            dc.send(reader.result); // 這裡一次傳完 (小檔適用)
-            document.getElementById('transfer_status').innerText = '發送完成';
+            dc.send(reader.result);
+            document.getElementById('transfer_status').innerText = `✅ ${file.name} 發送完成`;
+            appendMsg('我', `發送檔案: ${file.name}`, true);
         };
         reader.readAsArrayBuffer(file);
     }
 
-    let incomingFileMeta = null;
-    let incomingBuffer = [];
-
-    function handleFileMessage(event) {
-        const data = event.data;
+    let incomingMeta = null;
+    function handleFileMessage(e) {
+        const data = e.data;
         if(typeof data === 'string') {
             const msg = JSON.parse(data);
             if(msg.type === 'meta') {
-                incomingFileMeta = msg;
-                incomingBuffer = [];
+                incomingMeta = msg;
                 document.getElementById('transfer_status').innerText = `正在接收 ${msg.name}...`;
             }
         } else {
-            // 收到檔案內容
-            const blob = new Blob([data]); 
+            const blob = new Blob([data]);
             const url = URL.createObjectURL(blob);
-            document.getElementById('chat_log').innerHTML += `<div class="message other-message">
-                📥 收到檔案: <a href="${url}" download="${incomingFileMeta.name}">${incomingFileMeta.name}</a>
-            </div><div style="clear:both;"></div>`;
+            appendMsg('對方', `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold;">${incomingMeta.name}</a>`, false);
+            document.getElementById('transfer_status').innerText = `✅ ${incomingMeta.name} 接收完成`;
         }
     }
 </script>
