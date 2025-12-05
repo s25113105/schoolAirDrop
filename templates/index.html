@@ -3,73 +3,88 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CampusDrop 最終版</title>
+    <title>CampusDrop 最終完成版</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f4f4f9; }
-        .container { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f4f4f9; color: #333; }
+        .container { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 20px; }
         
+        /* 輸入框美化 */
+        input[type="text"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; outline: none; transition: 0.3s; }
+        input[type="text"]:focus { border-color: #007bff; box-shadow: 0 0 5px rgba(0,123,255,0.2); }
+        
+        /* 按鈕美化 */
+        button { padding: 10px 18px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-outline { background: transparent; border: 1px solid #007bff; color: #007bff; padding: 6px 12px; font-size: 0.9em; }
+        .btn-outline:hover { background: #e7f1ff; }
+
         /* 用戶列表 */
-        .peer-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .peer-item { padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
         .peer-item:last-child { border-bottom: none; }
-        .btn-connect { background: #28a745; color: white; border: none; padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 0.9em; }
-        .btn-connect:hover { background: #218838; }
         
         /* 聊天視窗 */
-        #chat_log { height: 350px; overflow-y: scroll; border: 1px solid #ddd; padding: 15px; margin-top:15px; background:#fff; border-radius: 8px; }
-        .message { margin-bottom: 8px; padding: 8px 12px; border-radius: 12px; max-width: 80%; word-wrap: break-word; }
-        .my-message { background: #007bff; color: white; float: right; clear: both; }
-        .other-message { background: #e9ecef; color: #333; float: left; clear: both; }
-        .sys-message { text-align: center; color: #888; font-size: 0.85em; clear: both; margin: 5px 0; }
+        #chat_log { height: 350px; overflow-y: scroll; border: 1px solid #eee; padding: 15px; margin-top:15px; background:#fafafa; border-radius: 8px; }
+        .message { margin-bottom: 10px; padding: 8px 14px; border-radius: 12px; max-width: 75%; position: relative; word-wrap: break-word; font-size: 0.95em; }
+        .my-message { background: #007bff; color: white; float: right; clear: both; border-bottom-right-radius: 2px; }
+        .other-message { background: #e9ecef; color: #333; float: left; clear: both; border-bottom-left-radius: 2px; }
+        .sys-message { text-align: center; color: #999; font-size: 0.85em; clear: both; margin: 8px 0; font-style: italic; }
+        .msg-name { font-size: 0.75em; color: #666; margin-bottom: 2px; display: block; }
         
-        /* 檔案區塊 (預設隱藏) */
-        #file_area { margin-top:15px; background:#e8f5e9; padding:15px; border-radius: 8px; border: 1px solid #c3e6cb; display:none; animation: fadeIn 0.5s; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        /* 檔案區塊 */
+        #file_area { margin-top:15px; background:#e8f5e9; padding:20px; border-radius: 8px; border: 1px solid #c3e6cb; display:none; animation: slideDown 0.5s; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2 style="text-align:center;">📡 CampusDrop <small style="font-size:0.5em; color:#666;">Cloud v2</small></h2>
+    <h2>📡 CampusDrop <small style="font-size:0.5em; color:#888;">雲端版</small></h2>
 
-    <div style="background:#f8f9fa; padding:10px; border-radius:8px; margin-bottom:15px; display:flex; gap:10px;">
-        <input type="text" id="my_name" placeholder="輸入暱稱" style="flex-grow:1; padding:8px; border:1px solid #ddd; border-radius:4px;">
-        <button onclick="updateName()" style="padding:8px 15px; background:#007bff; color:white; border:none; border-radius:4px; cursor:pointer;">設定暱稱</button>
+    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px; display:flex; gap:10px; align-items: center;">
+        <input type="text" id="my_name" placeholder="輸入您的暱稱" style="flex-grow:1;">
+        <button class="btn-primary" onclick="updateName()">上線 / 更新暱稱</button>
     </div>
-    <div style="text-align:right; font-size:0.8em; color:#666;">我的 UID: <span id="display_uid">...</span></div>
+    <div style="text-align:right; font-size:0.85em; color:#666;">我的 UID: <code id="display_uid" style="color:#e83e8c;">...</code></div>
 
-    <hr>
+    <hr style="border:0; border-top:1px solid #eee; margin: 20px 0;">
 
-    <h3>👥 在線同學 (<span id="count">0</span>)</h3>
-    <div id="peer_list"></div>
+    <h3 style="font-size:1.2em;">在線同學 (<span id="count">0</span> 人)</h3>
+    <div id="peer_list" style="margin-bottom: 20px;"></div>
 
     <div id="file_area">
-        <h4 style="margin:0 0 10px 0;">📂 P2P 檔案傳輸通道 (已連線)</h4>
-        <p>正在與 <strong id="target_peer_name" style="color:#28a745;"></strong> 連線中</p>
-        <div style="display:flex; gap:10px;">
+        <h4 style="margin:0 0 15px 0; color:#2e7d32;">📂 P2P 檔案傳輸通道 (已打通)</h4>
+        <p>正在與 <strong id="target_peer_name" style="color:#28a745; font-size:1.1em;"></strong> 連線中</p>
+        <div style="display:flex; gap:10px; align-items: center;">
             <input type="file" id="file_input" style="flex-grow:1;">
-            <button onclick="sendFile()" style="background:#28a745; color:white; border:none; padding:8px 20px; border-radius:4px; cursor:pointer;">傳送</button>
+            <button class="btn-success" onclick="sendFile()">傳送檔案</button>
         </div>
         <div id="transfer_status" style="margin-top:10px; font-weight:bold; color:#555;"></div>
     </div>
 
-    <hr>
-
+    <h3 style="font-size:1.2em;">💬 聊天室</h3>
     <div id="chat_log"></div>
-    <div style="margin-top:10px; display:flex; gap:5px;">
-        <input type="text" id="chat_input" placeholder="輸入訊息..." style="flex-grow:1; padding:10px; border:1px solid #ddd; border-radius:4px;">
-        <button onclick="sendChat()" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer;">發送</button>
+    <div style="margin-top:15px; display:flex; gap:10px;">
+        <input type="text" id="chat_input" placeholder="輸入訊息..." style="flex-grow:1;" onkeypress="if(event.key==='Enter') sendChat()">
+        <button class="btn-primary" onclick="sendChat()">發送</button>
     </div>
 </div>
 
 <script>
     const socket = io();
     
+    // 💡 關鍵變數：用來把 UID 翻譯成 名字
+    let NAME_MAPPING = {}; 
+
     // --- UID 與 名稱處理 ---
     function getUniqueUID() {
         let uid = localStorage.getItem('campus_uid');
         if (!uid) {
-            uid = Math.random().toString(36).substring(2, 6).toUpperCase();
+            uid = Math.random().toString(36).substring(2, 6).toUpperCase(); // 4位大寫亂碼
             localStorage.setItem('campus_uid', uid);
         }
         return uid;
@@ -82,14 +97,15 @@
 
     function updateName() {
         myName = document.getElementById('my_name').value;
+        if(!myName.trim()) return alert("請輸入暱稱！");
         localStorage.setItem('campus_name', myName);
         socket.emit('join', { uid: MY_UID, name: myName });
-        alert('暱稱已更新！');
+        alert('✅ 暱稱已更新！');
     }
 
     // --- Socket 事件 ---
     socket.on('connect', () => {
-        console.log('Connected to Server');
+        console.log('Connected');
         socket.emit('join', { uid: MY_UID, name: myName });
     });
 
@@ -98,30 +114,42 @@
         const others = users.filter(u => u.uid !== MY_UID);
         document.getElementById('count').textContent = others.length;
         
+        // 💡 每次更新列表時，順便更新「通訊錄」 (UID -> Name)
+        NAME_MAPPING = {};
+        users.forEach(u => {
+            NAME_MAPPING[u.uid] = u.name;
+        });
+        
         if(others.length === 0) {
-            list.innerHTML = '<div style="color:#999; text-align:center; padding:10px;">附近沒人...找個同學一起開網頁測試吧！</div>';
+            list.innerHTML = '<div style="color:#999; text-align:center; padding:15px; background:#f9f9f9; border-radius:6px;">附近尚無人...<br><small>請另一位同學打開網頁測試</small></div>';
         } else {
             list.innerHTML = others.map(u => `
                 <div class="peer-item">
-                    <div><strong>${u.name}</strong> <small style="color:#888;">#${u.uid}</small></div>
+                    <div>
+                        <strong>${u.name}</strong> 
+                        <span style="font-size:0.8em; color:#888; margin-left:5px;">#${u.uid}</span>
+                    </div>
                     ${PEER_CONNECTIONS[u.uid] ? 
-                        '<span style="color:green; font-weight:bold;">🔗 已連線</span>' : 
-                        `<button class="btn-connect" onclick="startP2P('${u.uid}', '${u.name}')">發起連線</button>`
+                        '<span style="color:green; font-weight:bold; font-size:0.9em;">✅ 已連線</span>' : 
+                        `<button class="btn-outline" onclick="startP2P('${u.uid}', '${u.name}')">連線傳檔</button>`
                     }
                 </div>
             `).join('');
         }
     });
 
-    // 接收聊天 (修正：顯示名字)
+    // 接收聊天 (💡 修正：使用通訊錄 NAME_MAPPING 查名字)
     socket.on('group_chat', (data) => {
-        // data.sender_name 是我們在後端新加的
-        appendMsg(data.sender_name, data.content, false);
+        // 優先順序：查表 > 後端給的名字 > UID
+        const senderUID = data.sender_uid;
+        const displayName = NAME_MAPPING[senderUID] || data.sender_name || senderUID;
+        
+        appendMsg(displayName, data.content, false);
     });
 
     function sendChat() {
         const txt = document.getElementById('chat_input').value;
-        if(!txt) return;
+        if(!txt.trim()) return;
         socket.emit('group_chat', { sender_uid: MY_UID, content: txt });
         appendMsg('我', txt, true);
         document.getElementById('chat_input').value = '';
@@ -132,31 +160,29 @@
         if (isSys) {
             log.innerHTML += `<div class="sys-message">${txt}</div>`;
         } else {
-            log.innerHTML += `<div class="message ${isMe ? 'my-message' : 'other-message'}">
-                <small style="opacity:0.8;">${name}</small><br>${txt}
-            </div><div style="clear:both;"></div>`;
+            // 對方訊息才顯示名字
+            const nameHtml = isMe ? '' : `<span class="msg-name">${name}</span>`;
+            log.innerHTML += `
+                <div style="clear:both;">
+                    <div class="message ${isMe ? 'my-message' : 'other-message'}">
+                        ${nameHtml}
+                        ${txt}
+                    </div>
+                </div>`;
         }
         log.scrollTop = log.scrollHeight;
     }
 
-    // --- WebRTC P2P 核心 (附帶詳細狀態顯示) ---
+    // --- WebRTC P2P 核心 ---
     const PEER_CONNECTIONS = {};
     const DATA_CHANNELS = {};
     const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
     async function startP2P(targetUid, targetName) {
-        appendMsg('系統', `正在呼叫 ${targetName} 建立 P2P 連線...`, false, true);
+        appendMsg('系統', `正在呼叫 ${targetName}...`, false, true);
         
         const pc = new RTCPeerConnection(rtcConfig);
         PEER_CONNECTIONS[targetUid] = pc;
-
-        // 監聽連線狀態
-        pc.oniceconnectionstatechange = () => {
-            console.log(`ICE State: ${pc.iceConnectionState}`);
-            if (pc.iceConnectionState === 'connected') {
-                 appendMsg('系統', `與 ${targetName} 的 P2P 通道已打通！`, false, true);
-            }
-        };
 
         const dc = pc.createDataChannel("file");
         setupDataChannel(dc, targetUid, targetName);
@@ -172,16 +198,15 @@
 
     socket.on('p2p_signal', async (data) => {
         const sender = data.sender_uid;
-        // 嘗試從列表中找名字，找不到就用 UID
-        let senderName = sender; 
-        // 這裡偷懶直接顯示 UID，正式版可以去 user list 查
+        // 嘗試查名字
+        const senderName = NAME_MAPPING[sender] || sender;
         
         if(!PEER_CONNECTIONS[sender]) {
-            appendMsg('系統', `收到來自 ${sender} 的連線請求...`, false, true);
+            appendMsg('系統', `收到 ${senderName} 的連線請求...`, false, true);
             const pc = new RTCPeerConnection(rtcConfig);
             PEER_CONNECTIONS[sender] = pc;
             
-            pc.ondatachannel = e => setupDataChannel(e.channel, sender, sender);
+            pc.ondatachannel = e => setupDataChannel(e.channel, sender, senderName);
             
             pc.onicecandidate = e => {
                 if(e.candidate) socket.emit('p2p_signal', { type: 'ice', target_uid: sender, sender_uid: MY_UID, candidate: e.candidate });
@@ -206,14 +231,13 @@
     function setupDataChannel(dc, uid, name) {
         DATA_CHANNELS[uid] = dc;
         dc.onopen = () => {
-            appendMsg('系統', `✅ 檔案傳輸通道就緒！`, false, true);
-            // 顯示檔案區塊
+            appendMsg('系統', `✅ 與 ${name} 連線成功！可以傳檔了`, false, true);
+            
             const fileArea = document.getElementById('file_area');
             fileArea.style.display = 'block';
-            document.getElementById('target_peer_name').innerText = name || uid;
+            document.getElementById('target_peer_name').innerText = name;
             
-            // 讓列表按鈕變色
-            socket.emit('join', { uid: MY_UID, name: myName }); // 觸發列表刷新
+            socket.emit('join', { uid: MY_UID, name: myName }); // 刷新按鈕狀態
         };
         dc.onmessage = handleFileMessage;
     }
@@ -223,7 +247,7 @@
         const file = document.getElementById('file_input').files[0];
         if(!file) return alert('請選擇檔案');
         
-        const targetUid = Object.keys(DATA_CHANNELS)[0]; // Demo: 傳給第一個連線的人
+        const targetUid = Object.keys(DATA_CHANNELS)[0]; 
         const dc = DATA_CHANNELS[targetUid];
         
         if(dc.readyState !== 'open') return alert('連線尚未準備好');
@@ -250,8 +274,12 @@
         } else {
             const blob = new Blob([data]);
             const url = URL.createObjectURL(blob);
-            appendMsg('對方', `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold;">${incomingMeta.name}</a>`, false);
-            document.getElementById('transfer_status').innerText = `✅ ${incomingMeta.name} 接收完成`;
+            // 查一下是誰傳的
+            const senderUid = Object.keys(DATA_CHANNELS).find(key => DATA_CHANNELS[key] === this) || '對方';
+            const senderName = NAME_MAPPING[senderUid] || senderUid;
+
+            appendMsg(senderName, `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold; color:#0056b3;">${incomingMeta.name}</a>`, false);
+            document.getElementById('transfer_status').innerText = `✅ 接收完成`;
         }
     }
 </script>
