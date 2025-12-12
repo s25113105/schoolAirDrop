@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CampusDrop 最終完美版</title>
+    <title>CampusDrop 穩定傳輸版</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f4f4f9; color: #333; }
@@ -21,7 +21,6 @@
         .btn-outline:hover { background: #e7f1ff; }
         .btn-active { background: #17a2b8; color: white; } 
         
-        /* 連線中狀態 (灰色) */
         .btn-connecting { background: #6c757d; color: white; cursor: pointer; }
         .btn-connecting:hover { background: #5a6268; }
 
@@ -33,6 +32,7 @@
         .my-message { background: #007bff; color: white; float: right; clear: both; }
         .other-message { background: #e9ecef; color: #333; float: left; clear: both; }
         .sys-message { text-align: center; color: #999; font-size: 0.85em; clear: both; margin: 8px 0; font-style: italic; }
+        .msg-name { font-size: 0.75em; color: #666; margin-bottom: 2px; display: block; }
         
         #file_area { margin-top:15px; background:#e8f5e9; padding:20px; border-radius: 8px; border: 1px solid #c3e6cb; display:none; }
         .selected-peer { background-color: #e3f2fd; border-radius: 6px; }
@@ -77,7 +77,7 @@
 </div>
 
 <div class="container">
-    <h2>📡 CampusDrop <small style="font-size:0.5em; color:#888;">最終完美版</small></h2>
+    <h2>📡 CampusDrop <small style="font-size:0.5em; color:#888;">穩定傳輸版</small></h2>
 
     <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px; display:flex; gap:10px; align-items: center;">
         <input type="text" id="my_name" placeholder="輸入您的暱稱" style="flex-grow:1;">
@@ -120,6 +120,9 @@
     let pendingFileToSend = null;
     let pendingRequestSender = null;     
     let pendingConnectionSender = null;  
+
+    // 🔥 設定：檔案切片大小 16KB (WebRTC 安全值)
+    const CHUNK_SIZE = 16384; 
 
     // --- UID & Name ---
     function getUniqueUID() {
@@ -233,7 +236,6 @@
     function disconnectPeer(uid) {
         const name = NAME_MAPPING[uid] || uid;
         const isConnecting = CONNECTING_PEERS.has(uid) || (PEER_CONNECTIONS[uid] && (!DATA_CHANNELS[uid] || DATA_CHANNELS[uid].readyState !== 'open'));
-        
         if(isConnecting || confirm(`確定要與 ${name} 斷開連線嗎？`)) {
             closeConnection(uid);
             appendMsg('系統', `您已斷開與 ${name} 的連線`, false, true);
@@ -261,7 +263,7 @@
         socket.emit('join', { uid: MY_UID, name: myName }); 
     }
 
-    // --- 連線請求邏輯 ---
+    // --- 信令處理 ---
 
     function askToConnect(targetUid, targetName) {
         appendMsg('系統', `正在請求與 ${targetName} 連線...`, false, true);
@@ -280,7 +282,6 @@
                 accepted: isAccepted
             });
             if(isAccepted) {
-                // B (接收者) 按下同意：只變灰，不發 Offer，等待 A
                 CONNECTING_PEERS.add(pendingConnectionSender);
                 socket.emit('join', { uid: MY_UID, name: myName }); 
                 appendMsg('系統', `接受連線，等待通道建立...`, false, true);
@@ -288,23 +289,19 @@
         }
     }
 
-    // 🔥 統一處理信令
     socket.on('p2p_signal', async (data) => {
         const sender = data.sender_uid;
         const senderName = NAME_MAPPING[sender] || sender;
         
-        // 1. 收到請求
         if (data.type === 'connection-request') {
             pendingConnectionSender = sender;
             document.getElementById('conn_req_sender').innerText = senderName;
             document.getElementById('connection_modal').style.display = 'flex';
             return;
         }
-        // 2. 收到回應 (A 收到 B 的同意)
         else if (data.type === 'connection-response') {
             if (data.accepted) {
                 appendMsg('系統', `${senderName} 接受連線，開始建立...`, false, true);
-                // 🔥 關鍵修正：只有 A (發起者) 負責建立 Offer
                 initiateWebRTC(sender, senderName); 
             } else {
                 CONNECTING_PEERS.delete(sender); 
@@ -315,9 +312,7 @@
             return;
         }
 
-        // 3. WebRTC 信令交換
         if(!PEER_CONNECTIONS[sender]) {
-            // 如果是 B (被動方)，收到 Offer 才建立 PC
             createPeerConnection(sender, senderName);
         }
         
@@ -336,12 +331,10 @@
         } catch(e) { console.error(e); }
     });
 
-    // 🔥 A 專用：發起 WebRTC (Create DC & Offer)
     async function initiateWebRTC(targetUid, targetName) {
         createPeerConnection(targetUid, targetName);
         const pc = PEER_CONNECTIONS[targetUid];
         
-        // 只有發起者建立 DataChannel
         const dc = pc.createDataChannel("file");
         setupDataChannel(dc, targetUid, targetName);
 
@@ -350,7 +343,6 @@
         socket.emit('p2p_signal', { type: 'offer', target_uid: targetUid, sender_uid: MY_UID, sdp: offer });
     }
 
-    // 通用：建立 PeerConnection 物件
     function createPeerConnection(uid, name) {
         const pc = new RTCPeerConnection(rtcConfig);
         PEER_CONNECTIONS[uid] = pc;
@@ -363,7 +355,6 @@
             }
         };
 
-        // B 專用：監聽 DataChannel (被動接收)
         pc.ondatachannel = e => {
             setupDataChannel(e.channel, uid, name);
         };
@@ -372,7 +363,6 @@
     function setupDataChannel(dc, uid, name) {
         DATA_CHANNELS[uid] = dc;
         dc.onopen = () => {
-            // 通道開通！
             CONNECTING_PEERS.delete(uid); 
             socket.emit('join', { uid: MY_UID, name: myName }); 
             appendMsg('系統', `✅ 與 ${name} 連線成功！`, false, true);
@@ -381,7 +371,7 @@
         dc.onmessage = (e) => handleDataMessage(e, uid);
     }
 
-    // --- 檔案傳輸邏輯 ---
+    // --- 🔥 修正後的檔案傳輸邏輯 (切片) ---
     function askToSendFile() {
         if (!currentTargetUid) return alert("請先選擇一位同學！");
         const file = document.getElementById('file_input').files[0];
@@ -391,12 +381,16 @@
         if(!dc || dc.readyState !== 'open') return alert('連線已中斷');
 
         pendingFileToSend = file;
+        // 傳送檔案請求 (包含大小)
         dc.send(JSON.stringify({ type: 'file-request', name: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB' }));
         document.getElementById('transfer_status').innerText = "⏳ 等待對方同意中...";
         appendMsg('我', `請求傳送檔案: ${file.name}`, true);
     }
 
     let incomingMeta = null;
+    let incomingBuffers = []; // 用來暫存接收到的切片
+    let receivedSize = 0;
+
     function handleDataMessage(e, senderUid) {
         const data = e.data;
         const senderName = NAME_MAPPING[senderUid] || senderUid;
@@ -412,21 +406,35 @@
             } else if (msg.type === 'request-response') {
                 if (msg.accepted) {
                     document.getElementById('transfer_status').innerText = "✅ 對方已同意，開始傳送...";
-                    startActualTransfer(); 
+                    startActualTransfer(); // 開始切片傳送
                 } else {
                     document.getElementById('transfer_status').innerText = "❌ 對方拒絕接收";
                     alert(`${senderName} 拒絕了您的檔案請求`);
                     pendingFileToSend = null;
                 }
             } else if (msg.type === 'meta') {
+                // 收到傳輸開始信號
                 incomingMeta = msg;
-                document.getElementById('transfer_status').innerText = `正在接收 ${msg.name}...`;
+                incomingBuffers = [];
+                receivedSize = 0;
+                document.getElementById('transfer_status').innerText = `正在接收 ${msg.name} (0%)...`;
+            } else if (msg.type === 'transfer-complete') {
+                // 收到傳輸完成信號，開始組裝
+                const blob = new Blob(incomingBuffers);
+                const url = URL.createObjectURL(blob);
+                appendMsg(senderName, `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold;">${incomingMeta.name}</a>`, false);
+                document.getElementById('transfer_status').innerText = `✅ 接收完成`;
+                incomingBuffers = []; // 清空
             }
         } else {
-            const blob = new Blob([data]);
-            const url = URL.createObjectURL(blob);
-            appendMsg(senderName, `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold;">${incomingMeta.name}</a>`, false);
-            document.getElementById('transfer_status').innerText = `✅ 接收完成`;
+            // 收到二進位切片
+            incomingBuffers.push(data);
+            receivedSize += data.byteLength;
+            // 更新進度條
+            if(incomingMeta && incomingMeta.totalSize) {
+                const percent = Math.round((receivedSize / incomingMeta.totalSize) * 100);
+                document.getElementById('transfer_status').innerText = `正在接收 ${incomingMeta.name} (${percent}%)...`;
+            }
         }
     }
 
@@ -439,18 +447,43 @@
         }
     }
 
+    // 🔥 核心：切片發送邏輯
     function startActualTransfer() {
         if (!pendingFileToSend || !currentTargetUid) return;
         const dc = DATA_CHANNELS[currentTargetUid];
         const file = pendingFileToSend;
-        dc.send(JSON.stringify({ type: 'meta', name: file.name }));
-        const reader = new FileReader();
-        reader.onload = () => {
-            dc.send(reader.result);
-            document.getElementById('transfer_status').innerText = `✅ 傳送完成`;
-            pendingFileToSend = null; 
+        
+        // 1. 傳送 Meta (包含總大小)
+        dc.send(JSON.stringify({ type: 'meta', name: file.name, totalSize: file.size }));
+
+        const fileReader = new FileReader();
+        let offset = 0;
+
+        fileReader.onload = (e) => {
+            dc.send(e.target.result); // 發送當前切片
+            offset += e.target.result.byteLength;
+
+            // 更新 UI 進度
+            const percent = Math.round((offset / file.size) * 100);
+            document.getElementById('transfer_status').innerText = `傳送中 ${percent}% ...`;
+
+            if (offset < file.size) {
+                readSlice(offset); // 繼續讀下一片
+            } else {
+                // 傳完了，發送結束信號
+                dc.send(JSON.stringify({ type: 'transfer-complete' }));
+                document.getElementById('transfer_status').innerText = `✅ 傳送完成`;
+                appendMsg('我', `檔案傳送完成: ${file.name}`, true);
+                pendingFileToSend = null; 
+            }
         };
-        reader.readAsArrayBuffer(file);
+
+        const readSlice = (o) => {
+            const slice = file.slice(o, o + CHUNK_SIZE);
+            fileReader.readAsArrayBuffer(slice);
+        };
+
+        readSlice(0); // 開始第一次讀取
     }
 </script>
 
