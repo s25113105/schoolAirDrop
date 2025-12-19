@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CampusDrop 穩定傳輸版</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; background: #f4f4f9; color: #333; }
+        .container { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); position: relative; }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 20px; }
+        
+        input[type="text"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; outline: none; transition: 0.3s; }
+        input[type="text"]:focus { border-color: #007bff; box-shadow: 0 0 5px rgba(0,123,255,0.2); }
+        
+        button { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; font-size: 0.85em; }
+        .btn-primary { background: #007bff; color: white; padding: 8px 15px; font-size: 0.9em; }
+        .btn-success { background: #28a745; color: white; padding: 8px 15px; font-size: 0.9em;}
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-outline { background: transparent; border: 1px solid #007bff; color: #007bff; padding: 6px 12px; }
+        .btn-outline:hover { background: #e7f1ff; }
+        .btn-active { background: #17a2b8; color: white; } 
+        
+        .btn-connecting { background: #6c757d; color: white; cursor: pointer; }
+        .btn-connecting:hover { background: #5a6268; }
+
+        .peer-item { padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
+        .peer-actions { display: flex; gap: 5px; }
+
+        #chat_log { height: 350px; overflow-y: scroll; border: 1px solid #eee; padding: 15px; margin-top:15px; background:#fafafa; border-radius: 8px; }
+        .message { margin-bottom: 10px; padding: 8px 14px; border-radius: 12px; max-width: 75%; position: relative; word-wrap: break-word; font-size: 0.95em; }
+        .my-message { background: #007bff; color: white; float: right; clear: both; }
+        .other-message { background: #e9ecef; color: #333; float: left; clear: both; }
+        .sys-message { text-align: center; color: #999; font-size: 0.85em; clear: both; margin: 8px 0; font-style: italic; }
+        .msg-name { font-size: 0.75em; color: #666; margin-bottom: 2px; display: block; }
+        
+        #file_area { margin-top:15px; background:#e8f5e9; padding:20px; border-radius: 8px; border: 1px solid #c3e6cb; display:none; }
+        .selected-peer { background-color: #e3f2fd; border-radius: 6px; }
+
+        .modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: white; padding: 25px; border-radius: 10px; width: 300px; text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3); animation: popIn 0.3s;
+        }
+        @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div id="connection_modal" class="modal">
+    <div class="modal-content">
+        <h3 style="margin-top:0;">🔗 連線請求</h3>
+        <p><strong id="conn_req_sender"></strong> 想要與您建立 P2P 連線</p>
+        <div style="display:flex; justify-content: space-around; margin-top:20px;">
+            <button class="btn-danger" onclick="respondToConnection(false)">拒絕</button>
+            <button class="btn-success" onclick="respondToConnection(true)">同意連線</button>
+        </div>
+    </div>
+</div>
+
+<div id="file_request_modal" class="modal">
+    <div class="modal-content">
+        <h3 style="margin-top:0;">📥 接收檔案請求</h3>
+        <p><strong id="file_req_sender"></strong> 想傳送檔案給你：</p>
+        <div style="background:#f8f9fa; padding:10px; border-radius:5px; margin:15px 0; word-break: break-all;">
+            <span id="req_filename" style="color:#007bff; font-weight:bold;"></span><br>
+            <small id="req_size" style="color:#666;"></small>
+        </div>
+        <div style="display:flex; justify-content: space-around;">
+            <button class="btn-danger" onclick="respondToFile(false)">拒絕</button>
+            <button class="btn-success" onclick="respondToFile(true)">同意接收</button>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <h2>📡 CampusDrop <small style="font-size:0.5em; color:#888;">穩定傳輸版</small></h2>
+
+    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px; display:flex; gap:10px; align-items: center;">
+        <input type="text" id="my_name" placeholder="輸入您的暱稱" style="flex-grow:1;">
+        <button class="btn-primary" onclick="updateName()">更新暱稱</button>
+    </div>
+    <div style="text-align:right; font-size:0.85em; color:#666;">我的 UID: <code id="display_uid" style="color:#e83e8c;">...</code></div>
+
+    <hr style="border:0; border-top:1px solid #eee; margin: 20px 0;">
+
+    <h3 style="font-size:1.2em;">在線同學 (<span id="count">0</span> 人)</h3>
+    <div id="peer_list" style="margin-bottom: 20px;"></div>
+
+    <div id="file_area">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h4 style="margin:0; color:#2e7d32;">📂 檔案傳輸</h4>
+            <button class="btn-danger" onclick="disconnectCurrentPeer()">❌ 結束目前連線</button>
+        </div>
+        <p>目前對象：<strong id="target_peer_name" style="color:#007bff; font-size:1.2em;">...</strong></p>
+        <div style="display:flex; gap:10px; align-items: center;">
+            <input type="file" id="file_input" style="flex-grow:1;">
+            <button class="btn-success" onclick="askToSendFile()">請求傳送</button>
+        </div>
+        <div id="transfer_status" style="margin-top:10px; font-weight:bold; color:#555;"></div>
+    </div>
+
+    <h3 style="font-size:1.2em;">💬 聊天室</h3>
+    <div id="chat_log"></div>
+    <div style="margin-top:15px; display:flex; gap:10px;">
+        <input type="text" id="chat_input" placeholder="輸入訊息..." style="flex-grow:1;" onkeypress="if(event.key==='Enter') sendChat()">
+        <button class="btn-primary" onclick="sendChat()">發送</button>
+    </div>
+</div>
+
+<script>
+    const socket = io();
+    let NAME_MAPPING = {}; 
+    let currentTargetUid = null;
+    let CONNECTING_PEERS = new Set();
+    
+    let pendingFileToSend = null;
+    let pendingRequestSender = null;     
+    let pendingConnectionSender = null;  
+
+    // 🔥 設定：檔案切片大小 16KB (WebRTC 安全值)
+    const CHUNK_SIZE = 16384; 
+
+    // --- UID & Name ---
+    function getUniqueUID() {
+        let uid = localStorage.getItem('campus_uid');
+        if (!uid) {
+            uid = Math.random().toString(36).substring(2, 6).toUpperCase();
+            localStorage.setItem('campus_uid', uid);
+        }
+        return uid;
+    }
+    const MY_UID = getUniqueUID();
+    document.getElementById('display_uid').textContent = MY_UID;
+    
+    let myName = localStorage.getItem('campus_name') || '同學' + Math.floor(Math.random()*100);
+    document.getElementById('my_name').value = myName;
+
+    function updateName() {
+        myName = document.getElementById('my_name').value;
+        if(!myName.trim()) return alert("請輸入暱稱！");
+        localStorage.setItem('campus_name', myName);
+        socket.emit('join', { uid: MY_UID, name: myName });
+        alert('✅ 暱稱已更新！');
+    }
+
+    // --- Socket ---
+    socket.on('connect', () => {
+        console.log('Connected');
+        socket.emit('join', { uid: MY_UID, name: myName });
+    });
+
+    socket.on('update_user_list', (users) => {
+        const list = document.getElementById('peer_list');
+        const others = users.filter(u => u.uid !== MY_UID);
+        document.getElementById('count').textContent = others.length;
+        
+        NAME_MAPPING = {};
+        users.forEach(u => NAME_MAPPING[u.uid] = u.name);
+        
+        if(others.length === 0) {
+            list.innerHTML = '<div style="color:#999; text-align:center; padding:15px;">附近尚無人...</div>';
+        } else {
+            list.innerHTML = others.map(u => {
+                const isFullyConnected = DATA_CHANNELS[u.uid] && DATA_CHANNELS[u.uid].readyState === 'open';
+                const isConnecting = CONNECTING_PEERS.has(u.uid) || (PEER_CONNECTIONS[u.uid] && !isFullyConnected);
+
+                let actionBtns = '';
+                if (isFullyConnected) {
+                    actionBtns = `
+                        <button class="btn-active" onclick="selectPeer('${u.uid}')">傳檔</button>
+                        <button class="btn-danger" onclick="disconnectPeer('${u.uid}')">斷開</button>
+                    `;
+                } else if (isConnecting) {
+                    actionBtns = `<button class="btn-connecting" onclick="disconnectPeer('${u.uid}')">⏳ 連線中 (點擊取消)</button>`;
+                } else {
+                    actionBtns = `<button class="btn-outline" onclick="askToConnect('${u.uid}', '${u.name}')">請求連線</button>`;
+                }
+
+                const activeClass = (u.uid === currentTargetUid) ? 'selected-peer' : '';
+                return `
+                <div class="peer-item ${activeClass}">
+                    <div><strong>${u.name}</strong> <span style="color:#888; font-size:0.8em;">#${u.uid}</span></div>
+                    <div class="peer-actions">${actionBtns}</div>
+                </div>`;
+            }).join('');
+        }
+    });
+
+    socket.on('group_chat', (data) => {
+        const senderUID = data.sender_uid;
+        const displayName = NAME_MAPPING[senderUID] || data.sender_name || senderUID;
+        appendMsg(displayName, data.content, false);
+    });
+
+    function sendChat() {
+        const txt = document.getElementById('chat_input').value;
+        if(!txt.trim()) return;
+        socket.emit('group_chat', { sender_uid: MY_UID, content: txt });
+        appendMsg('我', txt, true);
+        document.getElementById('chat_input').value = '';
+    }
+
+    function appendMsg(name, txt, isMe, isSys=false) {
+        const log = document.getElementById('chat_log');
+        if (isSys) {
+            log.innerHTML += `<div class="sys-message">${txt}</div>`;
+        } else {
+            const nameHtml = isMe ? '' : `<span class="msg-name" style="font-size:0.75em;color:#666;margin-bottom:2px;display:block;">${name}</span>`;
+            log.innerHTML += `<div style="clear:both;"><div class="message ${isMe ? 'my-message' : 'other-message'}">${nameHtml}${txt}</div></div>`;
+        }
+        log.scrollTop = log.scrollHeight;
+    }
+
+    // --- WebRTC Core ---
+    const PEER_CONNECTIONS = {};
+    const DATA_CHANNELS = {};
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    function selectPeer(uid) {
+        if (!DATA_CHANNELS[uid] || DATA_CHANNELS[uid].readyState !== 'open') {
+             disconnectPeer(uid);
+             return;
+        }
+        currentTargetUid = uid;
+        const name = NAME_MAPPING[uid] || uid;
+        document.getElementById('file_area').style.display = 'block';
+        document.getElementById('target_peer_name').innerText = name;
+        document.getElementById('transfer_status').innerText = "";
+        socket.emit('join', { uid: MY_UID, name: myName }); 
+    }
+
+    function disconnectPeer(uid) {
+        const name = NAME_MAPPING[uid] || uid;
+        const isConnecting = CONNECTING_PEERS.has(uid) || (PEER_CONNECTIONS[uid] && (!DATA_CHANNELS[uid] || DATA_CHANNELS[uid].readyState !== 'open'));
+        if(isConnecting || confirm(`確定要與 ${name} 斷開連線嗎？`)) {
+            closeConnection(uid);
+            appendMsg('系統', `您已斷開與 ${name} 的連線`, false, true);
+        }
+    }
+
+    function disconnectCurrentPeer() {
+        if(currentTargetUid) disconnectPeer(currentTargetUid);
+    }
+
+    function closeConnection(uid) {
+        if(PEER_CONNECTIONS[uid]) {
+            PEER_CONNECTIONS[uid].close();
+            delete PEER_CONNECTIONS[uid];
+        }
+        if(DATA_CHANNELS[uid]) {
+            DATA_CHANNELS[uid].close();
+            delete DATA_CHANNELS[uid];
+        }
+        if (currentTargetUid === uid) {
+            document.getElementById('file_area').style.display = 'none';
+            currentTargetUid = null;
+        }
+        CONNECTING_PEERS.delete(uid); 
+        socket.emit('join', { uid: MY_UID, name: myName }); 
+    }
+
+    // --- 信令處理 ---
+
+    function askToConnect(targetUid, targetName) {
+        appendMsg('系統', `正在請求與 ${targetName} 連線...`, false, true);
+        CONNECTING_PEERS.add(targetUid);
+        socket.emit('join', { uid: MY_UID, name: myName }); 
+        socket.emit('p2p_signal', { type: 'connection-request', target_uid: targetUid, sender_uid: MY_UID });
+    }
+
+    function respondToConnection(isAccepted) {
+        document.getElementById('connection_modal').style.display = 'none';
+        if (pendingConnectionSender) {
+            socket.emit('p2p_signal', {
+                type: 'connection-response',
+                target_uid: pendingConnectionSender,
+                sender_uid: MY_UID,
+                accepted: isAccepted
+            });
+            if(isAccepted) {
+                CONNECTING_PEERS.add(pendingConnectionSender);
+                socket.emit('join', { uid: MY_UID, name: myName }); 
+                appendMsg('系統', `接受連線，等待通道建立...`, false, true);
+            }
+        }
+    }
+
+    socket.on('p2p_signal', async (data) => {
+        const sender = data.sender_uid;
+        const senderName = NAME_MAPPING[sender] || sender;
+        
+        if (data.type === 'connection-request') {
+            pendingConnectionSender = sender;
+            document.getElementById('conn_req_sender').innerText = senderName;
+            document.getElementById('connection_modal').style.display = 'flex';
+            return;
+        }
+        else if (data.type === 'connection-response') {
+            if (data.accepted) {
+                appendMsg('系統', `${senderName} 接受連線，開始建立...`, false, true);
+                initiateWebRTC(sender, senderName); 
+            } else {
+                CONNECTING_PEERS.delete(sender); 
+                appendMsg('系統', `❌ ${senderName} 拒絕了連線`, false, true);
+                alert(`${senderName} 拒絕了連線`);
+                socket.emit('join', { uid: MY_UID, name: myName }); 
+            }
+            return;
+        }
+
+        if(!PEER_CONNECTIONS[sender]) {
+            createPeerConnection(sender, senderName);
+        }
+        
+        const pc = PEER_CONNECTIONS[sender];
+        try {
+            if(data.type === 'offer') {
+                await pc.setRemoteDescription(data.sdp);
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit('p2p_signal', { type: 'answer', target_uid: sender, sender_uid: MY_UID, sdp: answer });
+            } else if(data.type === 'answer') {
+                await pc.setRemoteDescription(data.sdp);
+            } else if(data.type === 'ice') {
+                await pc.addIceCandidate(data.candidate);
+            }
+        } catch(e) { console.error(e); }
+    });
+
+    async function initiateWebRTC(targetUid, targetName) {
+        createPeerConnection(targetUid, targetName);
+        const pc = PEER_CONNECTIONS[targetUid];
+        
+        const dc = pc.createDataChannel("file");
+        setupDataChannel(dc, targetUid, targetName);
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('p2p_signal', { type: 'offer', target_uid: targetUid, sender_uid: MY_UID, sdp: offer });
+    }
+
+    function createPeerConnection(uid, name) {
+        const pc = new RTCPeerConnection(rtcConfig);
+        PEER_CONNECTIONS[uid] = pc;
+        
+        pc.onicecandidate = e => { if(e.candidate) socket.emit('p2p_signal', { type: 'ice', target_uid: uid, sender_uid: MY_UID, candidate: e.candidate }); };
+        
+        pc.oniceconnectionstatechange = () => {
+             if(pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+                closeConnection(uid);
+            }
+        };
+
+        pc.ondatachannel = e => {
+            setupDataChannel(e.channel, uid, name);
+        };
+    }
+
+    function setupDataChannel(dc, uid, name) {
+        DATA_CHANNELS[uid] = dc;
+        dc.onopen = () => {
+            CONNECTING_PEERS.delete(uid); 
+            socket.emit('join', { uid: MY_UID, name: myName }); 
+            appendMsg('系統', `✅ 與 ${name} 連線成功！`, false, true);
+            selectPeer(uid);
+        };
+        dc.onmessage = (e) => handleDataMessage(e, uid);
+    }
+
+    // --- 🔥 修正後的檔案傳輸邏輯 (切片) ---
+    function askToSendFile() {
+        if (!currentTargetUid) return alert("請先選擇一位同學！");
+        const file = document.getElementById('file_input').files[0];
+        if(!file) return alert('請選擇檔案');
+        
+        const dc = DATA_CHANNELS[currentTargetUid];
+        if(!dc || dc.readyState !== 'open') return alert('連線已中斷');
+
+        pendingFileToSend = file;
+        // 傳送檔案請求 (包含大小)
+        dc.send(JSON.stringify({ type: 'file-request', name: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB' }));
+        document.getElementById('transfer_status').innerText = "⏳ 等待對方同意中...";
+        appendMsg('我', `請求傳送檔案: ${file.name}`, true);
+    }
+
+    let incomingMeta = null;
+    let incomingBuffers = []; // 用來暫存接收到的切片
+    let receivedSize = 0;
+
+    function handleDataMessage(e, senderUid) {
+        const data = e.data;
+        const senderName = NAME_MAPPING[senderUid] || senderUid;
+
+        if(typeof data === 'string') {
+            const msg = JSON.parse(data);
+            if (msg.type === 'file-request') {
+                pendingRequestSender = senderUid;
+                document.getElementById('file_req_sender').innerText = senderName;
+                document.getElementById('req_filename').innerText = msg.name;
+                document.getElementById('req_size').innerText = msg.size;
+                document.getElementById('file_request_modal').style.display = 'flex';
+            } else if (msg.type === 'request-response') {
+                if (msg.accepted) {
+                    document.getElementById('transfer_status').innerText = "✅ 對方已同意，開始傳送...";
+                    startActualTransfer(); // 開始切片傳送
+                } else {
+                    document.getElementById('transfer_status').innerText = "❌ 對方拒絕接收";
+                    alert(`${senderName} 拒絕了您的檔案請求`);
+                    pendingFileToSend = null;
+                }
+            } else if (msg.type === 'meta') {
+                // 收到傳輸開始信號
+                incomingMeta = msg;
+                incomingBuffers = [];
+                receivedSize = 0;
+                document.getElementById('transfer_status').innerText = `正在接收 ${msg.name} (0%)...`;
+            } else if (msg.type === 'transfer-complete') {
+                // 收到傳輸完成信號，開始組裝
+                const blob = new Blob(incomingBuffers);
+                const url = URL.createObjectURL(blob);
+                appendMsg(senderName, `📥 傳送了檔案: <a href="${url}" download="${incomingMeta.name}" style="font-weight:bold;">${incomingMeta.name}</a>`, false);
+                document.getElementById('transfer_status').innerText = `✅ 接收完成`;
+                incomingBuffers = []; // 清空
+            }
+        } else {
+            // 收到二進位切片
+            incomingBuffers.push(data);
+            receivedSize += data.byteLength;
+            // 更新進度條
+            if(incomingMeta && incomingMeta.totalSize) {
+                const percent = Math.round((receivedSize / incomingMeta.totalSize) * 100);
+                document.getElementById('transfer_status').innerText = `正在接收 ${incomingMeta.name} (${percent}%)...`;
+            }
+        }
+    }
+
+    function respondToFile(isAccepted) {
+        document.getElementById('file_request_modal').style.display = 'none';
+        const dc = DATA_CHANNELS[pendingRequestSender];
+        if (dc) {
+            dc.send(JSON.stringify({ type: 'request-response', accepted: isAccepted }));
+            if(isAccepted) appendMsg('系統', `您同意接收檔案`, false, true);
+        }
+    }
+
+    // 🔥 核心：切片發送邏輯
+    function startActualTransfer() {
+        if (!pendingFileToSend || !currentTargetUid) return;
+        const dc = DATA_CHANNELS[currentTargetUid];
+        const file = pendingFileToSend;
+        
+        // 1. 傳送 Meta (包含總大小)
+        dc.send(JSON.stringify({ type: 'meta', name: file.name, totalSize: file.size }));
+
+        const fileReader = new FileReader();
+        let offset = 0;
+
+        fileReader.onload = (e) => {
+            dc.send(e.target.result); // 發送當前切片
+            offset += e.target.result.byteLength;
+
+            // 更新 UI 進度
+            const percent = Math.round((offset / file.size) * 100);
+            document.getElementById('transfer_status').innerText = `傳送中 ${percent}% ...`;
+
+            if (offset < file.size) {
+                readSlice(offset); // 繼續讀下一片
+            } else {
+                // 傳完了，發送結束信號
+                dc.send(JSON.stringify({ type: 'transfer-complete' }));
+                document.getElementById('transfer_status').innerText = `✅ 傳送完成`;
+                appendMsg('我', `檔案傳送完成: ${file.name}`, true);
+                pendingFileToSend = null; 
+            }
+        };
+
+        const readSlice = (o) => {
+            const slice = file.slice(o, o + CHUNK_SIZE);
+            fileReader.readAsArrayBuffer(slice);
+        };
+
+        readSlice(0); // 開始第一次讀取
+    }
+</script>
+
+</body>
+</html>
